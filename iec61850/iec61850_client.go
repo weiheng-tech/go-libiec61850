@@ -5,11 +5,12 @@ import "C"
 import (
 	"errors"
 	"fmt"
-	"github.com/jifanchn/go-libiec61850/iec61850/scl_xml"
 	"strconv"
 	"strings"
 	"time"
 	"unsafe"
+
+	"github.com/weiheng-tech/go-libiec61850/iec61850/scl_xml"
 )
 
 type ClientState int

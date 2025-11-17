@@ -1,7 +1,5 @@
 package iec61850
 
-import "C"
-
 // #include <iec61850_client.h>
 import "C"
 

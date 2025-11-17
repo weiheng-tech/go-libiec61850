@@ -2,12 +2,13 @@ package test
 
 import (
 	"fmt"
-	"github.com/jifanchn/go-libiec61850/iec61850"
 	"os"
 	"os/signal"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/weiheng-tech/go-libiec61850/iec61850"
 )
 
 func TestIEC61850ServerDynamicTest(t *testing.T) {

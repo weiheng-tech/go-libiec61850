@@ -1,8 +1,9 @@
 package test
 
 import (
-	"github.com/jifanchn/go-libiec61850/iec61850/scl_xml"
 	"testing"
+
+	"github.com/weiheng-tech/go-libiec61850/iec61850/scl_xml"
 )
 
 func TestIEC61850LoadICD(t *testing.T) {

@@ -2,9 +2,10 @@ package test
 
 import (
 	"fmt"
-	"github.com/jifanchn/go-libiec61850/iec61850"
 	"testing"
 	"time"
+
+	"github.com/weiheng-tech/go-libiec61850/iec61850"
 )
 
 func TestIEC61850DirectWithNormalSecurity(t *testing.T) {

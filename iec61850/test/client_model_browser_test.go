@@ -2,8 +2,9 @@ package test
 
 import (
 	"fmt"
-	"github.com/jifanchn/go-libiec61850/iec61850"
 	"testing"
+
+	"github.com/weiheng-tech/go-libiec61850/iec61850"
 )
 
 func TestIEC61850ClientPrintTree(t *testing.T) {
