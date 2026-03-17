@@ -478,6 +478,88 @@ func (client *IedClient) ExplainDataSetValues(values []GoMmsValue, dSetScl *scl_
 	return ret, nil
 }
 
+// ReadDataSetFlat reads a dataset and directly maps values to named paths using a
+// pre-computed schema. Unlike ReadDataSetValues, it does not allocate intermediate
+// []GoMmsValue slices for nested sub-structures — all extraction is done in C-land.
+//
+// out is not cleared before writing. The caller may reuse the same map across calls
+// (clearing it manually) to eliminate per-call map allocation.
+func (client *IedClient) ReadDataSetFlat(dataSetRef string, schema *DataSetSchema, out map[string]interface{}) error {
+	cRef := C.CString(dataSetRef)
+	defer C.free(unsafe.Pointer(cRef))
+
+	var clientError C.IedClientError
+	clientDataSet := C.IedConnection_readDataSetValues(client.connection, &clientError, cRef, nil)
+	if clientError != C.IED_ERROR_OK {
+		return fmt.Errorf("failed to read dataset %s: %s", dataSetRef, Err(clientError))
+	}
+	defer C.ClientDataSet_destroy(clientDataSet)
+
+	topValues := C.ClientDataSet_getValues(clientDataSet)
+
+	for i := range schema.Leaves {
+		leaf := &schema.Leaves[i]
+
+		topVal := C.MmsValue_getElement(topValues, C.int(leaf.FCDAIdx))
+		if topVal == nil {
+			continue
+		}
+
+		var target *C.MmsValue
+		if leaf.DAIdx < 0 {
+			// DA-level FCDA: topVal is already the leaf.
+			target = topVal
+		} else {
+			// DO-level FCDA: descend into sub-structure.
+			target = C.MmsValue_getElement(topVal, C.int(leaf.DAIdx))
+			if target == nil {
+				continue
+			}
+			// Unwrap single-element structures (e.g. SAV instMag wrapping f/i).
+			if MMSType(C.MmsValue_getType(target)) == MMS_STRUCTURE {
+				if inner := C.MmsValue_getElement(target, 0); inner != nil {
+					target = inner
+				}
+			}
+		}
+
+		out[leaf.Path] = client.extractPrimitive(target)
+	}
+
+	return nil
+}
+
+// extractPrimitive converts a leaf C MmsValue to a Go primitive.
+// It does not handle MMS_STRUCTURE or MMS_ARRAY — use ReadDataSetFlat with a schema instead.
+func (client *IedClient) extractPrimitive(value *C.MmsValue) interface{} {
+	switch MMSType(C.MmsValue_getType(value)) {
+	case MMS_BOOLEAN:
+		return bool(C.MmsValue_getBoolean(value))
+	case MMS_FLOAT:
+		return float64(C.MmsValue_toDouble(value))
+	case MMS_INTEGER:
+		return int64(C.MmsValue_toInt64(value))
+	case MMS_UNSIGNED:
+		return int64(C.MmsValue_toInt64(value))
+	case MMS_STRING, MMS_VISIBLE_STRING:
+		if s := C.MmsValue_toString(value); s != nil {
+			return C.GoString(s)
+		}
+		return ""
+	case MMS_BIT_STRING:
+		if client.withoutTimestamps {
+			return uint32(0)
+		}
+		return uint32(C.MmsValue_getBitStringAsInteger(value))
+	case MMS_UTC_TIME:
+		if client.withoutTimestamps {
+			return uint32(0)
+		}
+		return uint32(C.MmsValue_toUnixTimestamp(value))
+	}
+	return nil
+}
+
 func (client *IedClient) Close() {
 	C.IedConnection_close(client.connection)
 	C.IedConnection_destroy(client.connection)
