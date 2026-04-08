@@ -1,18 +1,35 @@
 FROM ubuntu:20.04
 
-RUN apt-get update -y \
-    && apt-get install -y gcc-multilib-arm-linux-gnueabihf binutils-arm-linux-gnueabihf g++-multilib-arm-linux-gnueabihf
-RUN DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get install -y git cmake
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Etc/UTC
 
-RUN mkdir /workspace && cd /workspace \
-    && git clone https://github.com/mz-automation/libiec61850.git \
+RUN apt-get update -y && apt-get install -y --no-install-recommends \
+        gcc-arm-linux-gnueabihf \
+        g++-arm-linux-gnueabihf \
+        binutils-arm-linux-gnueabihf \
+        libc6-dev-armhf-cross \
+        git \
+        cmake \
+        make \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG LIBIEC61850_REF=v1.6
+RUN mkdir -p /workspace && cd /workspace \
+    && git clone --depth 1 --branch ${LIBIEC61850_REF} \
+       https://github.com/mz-automation/libiec61850.git \
     && mkdir libiec61850/build
-COPY linux-arm-toolchain.cmake /workspace/libiec61850/build
+
+COPY linux-arm-toolchain.cmake /workspace/libiec61850/build/
 
 RUN cd /workspace/libiec61850/build \
-    && cmake -G"Unix Makefiles" -DCMAKE_TOOLCHAIN_FILE=linux-arm-toolchain.cmake .. ${1+"$@"} \
-    && make -j 2 \
+    && cmake -G "Unix Makefiles" \
+        -DCMAKE_TOOLCHAIN_FILE=linux-arm-toolchain.cmake \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/workspace/install \
+        -DBUILD_EXAMPLES=OFF \
+        .. \
+    && make -j"$(nproc)" \
     && make install
 
-
-WORKDIR /workspace/libiec61850/build
+WORKDIR /workspace/install
