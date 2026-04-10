@@ -57,7 +57,7 @@ static void flatten_mms_value(MmsValue* val, FlatMmsValue* arr, int* index, int 
         arr[*index].ival = MmsValue_getBoolean(val);
         (*index)++;
     } else if (t == MMS_FLOAT) {
-        arr[*index].dval = (double)MmsValue_toFloat(val);
+        arr[*index].dval = (double)MmsValue_toDouble(val);
         (*index)++;
     } else if (t == MMS_INTEGER || t == MMS_UNSIGNED) {
         arr[*index].ival = MmsValue_toInt64(val);
@@ -69,12 +69,10 @@ static void flatten_mms_value(MmsValue* val, FlatMmsValue* arr, int* index, int 
         arr[*index].ival = MmsValue_getBitStringAsInteger(val);
         (*index)++;
     } else if (t == MMS_UTC_TIME) {
-        arr[*index].ival = MmsValue_toUint32(val); // MZ library API is often something like MmsValue_toUnixTimestamp 
-        // Wait, MmsValue_toUnixTimestamp was used in the Go file `C.MmsValue_toUnixTimestamp(val)`
-        // I will match it closely.
         arr[*index].ival = MmsValue_toUnixTimestamp(val);
         (*index)++;
     } else if (t == MMS_STRUCTURE || t == MMS_ARRAY) {
+        arr[*index].typ = (t == MMS_STRUCTURE) ? FLAT_STRUCT_START : FLAT_ARRAY_START;
         (*index)++;
         
         int size = MmsValue_getArraySize(val);
@@ -84,6 +82,7 @@ static void flatten_mms_value(MmsValue* val, FlatMmsValue* arr, int* index, int 
         }
         
         if (*index < max_len) {
+            arr[*index].typ = (t == MMS_STRUCTURE) ? FLAT_STRUCT_END : FLAT_ARRAY_END;
             (*index)++;
         }
     } else {
