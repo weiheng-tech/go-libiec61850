@@ -5,10 +5,20 @@ package iec61850
 // live in report_bridge.c which is compiled alongside this package.
 
 /*
+#include <stdlib.h>
 #include <iec61850_client.h>
 extern void installGoReportHandler(IedConnection conn, const char* rcbRef,
                                    const char* rptId, int handlerID);
 extern void uninstallGoReportHandler(IedConnection conn, const char* rcbRef);
+
+typedef struct {
+    int typ;
+    int64_t ival;
+    double dval;
+    const char* sval;
+} FlatMmsValue;
+
+extern FlatMmsValue* flattenReportDataSet(ClientReport report, int* out_count);
 */
 import "C"
 import (
@@ -130,58 +140,65 @@ func buildReport(rcbRef string, cr C.ClientReport) *Report {
 		r.Timestamp = uint64(C.ClientReport_getTimestamp(cr))
 	}
 
-	values := C.ClientReport_getDataSetValues(cr)
-	if values == nil {
+	var count C.int
+	cArr := C.flattenReportDataSet(cr, &count)
+	if cArr == nil || count <= 0 {
 		return r
 	}
+	defer C.free(unsafe.Pointer(cArr))
+
+	flatSlice := unsafe.Slice((*C.FlatMmsValue)(unsafe.Pointer(cArr)), int(count))
+	pos := 0
 
 	hasReason := bool(C.ClientReport_hasReasonForInclusion(cr))
 
-	// Iterate dataset elements until MmsValue_getElement returns nil.
-	for i := 0; ; i++ {
-		val := C.MmsValue_getElement(values, C.int(i))
-		if val == nil {
-			break
-		}
+	for i := 0; pos < len(flatSlice); i++ {
 		entry := ReportEntry{}
 		if hasReason {
 			entry.Reason = ReasonForInclusion(C.ClientReport_getReasonForInclusion(cr, C.int(i)))
 		}
-		entry.Value = extractReportValue(val)
+		entry.Value = extractFlatValue(flatSlice, &pos)
 		r.Entries = append(r.Entries, entry)
 	}
 
 	return r
 }
 
-// extractReportValue converts any MmsValue to a Go value.
+// extractFlatValue converts a flat slice of C.FlatMmsValue tokens back to a recursive Go value.
 // Structures are returned as []interface{} so the caller can correlate
 // entries with a DataSetSchema if needed.
-func extractReportValue(val *C.MmsValue) interface{} {
-	switch MMSType(C.MmsValue_getType(val)) {
-	case MMS_BOOLEAN:
-		return bool(C.MmsValue_getBoolean(val))
-	case MMS_FLOAT:
-		return float64(C.MmsValue_toDouble(val))
-	case MMS_INTEGER, MMS_UNSIGNED:
-		return int64(C.MmsValue_toInt64(val))
-	case MMS_STRING, MMS_VISIBLE_STRING:
-		if s := C.MmsValue_toString(val); s != nil {
-			return C.GoString(s)
+func extractFlatValue(flatSlice []C.FlatMmsValue, pos *int) interface{} {
+	if *pos >= len(flatSlice) {
+		return nil
+	}
+	elem := flatSlice[*pos]
+	*pos++
+
+	switch int(elem.typ) {
+	case int(MMS_BOOLEAN):
+		return elem.ival != 0
+	case int(MMS_FLOAT):
+		return float64(elem.dval)
+	case int(MMS_INTEGER), int(MMS_UNSIGNED):
+		return int64(elem.ival)
+	case int(MMS_STRING), int(MMS_VISIBLE_STRING), int(MMS_OCTET_STRING): // Add OCTET string match if needed
+		if elem.sval != nil {
+			return C.GoString(elem.sval)
 		}
 		return ""
-	case MMS_BIT_STRING:
-		return uint32(C.MmsValue_getBitStringAsInteger(val))
-	case MMS_UTC_TIME:
-		return uint32(C.MmsValue_toUnixTimestamp(val))
-	case MMS_STRUCTURE, MMS_ARRAY:
+	case int(MMS_BIT_STRING):
+		return uint32(elem.ival)
+	case int(MMS_UTC_TIME):
+		return uint32(elem.ival)
+	case 100, 102: // FLAT_STRUCT_START, FLAT_ARRAY_START
 		var subs []interface{}
-		for i := 0; ; i++ {
-			sub := C.MmsValue_getElement(val, C.int(i))
-			if sub == nil {
+		for *pos < len(flatSlice) {
+			typ := int(flatSlice[*pos].typ)
+			if typ == 101 || typ == 103 { // FLAT_STRUCT_END, FLAT_ARRAY_END
+				*pos++
 				break
 			}
-			subs = append(subs, extractReportValue(sub))
+			subs = append(subs, extractFlatValue(flatSlice, pos))
 		}
 		return subs
 	}
