@@ -37,10 +37,10 @@ type IedClient struct {
 
 	connection C.IedConnection
 
-	// Per-control-reference MMS Control clients (libiec61850 API allows multiple Operate on same instance).
+	// Per-control-reference MMS Control clients + reusable ctlVal MmsValue (see iec61850_control.go).
 	// Cleared in Close before the connection is destroyed.
 	controlMu    sync.Mutex
-	controlCache map[string]C.ControlObjectClient
+	controlCache map[string]*cachedControl
 }
 
 func NewIedClient(options ...Option) *IedClient {
