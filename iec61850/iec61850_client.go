@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -35,6 +36,11 @@ type IedClient struct {
 	withoutTimestamps bool
 
 	connection C.IedConnection
+
+	// Per-control-reference MMS Control clients (libiec61850 API allows multiple Operate on same instance).
+	// Cleared in Close before the connection is destroyed.
+	controlMu    sync.Mutex
+	controlCache map[string]C.ControlObjectClient
 }
 
 func NewIedClient(options ...Option) *IedClient {
@@ -561,6 +567,7 @@ func (client *IedClient) extractPrimitive(value *C.MmsValue) interface{} {
 }
 
 func (client *IedClient) Close() {
+	client.clearControlObjectCache()
 	C.IedConnection_close(client.connection)
 	C.IedConnection_destroy(client.connection)
 }

@@ -7,19 +7,57 @@ import (
 	"unsafe"
 )
 
+// clearControlObjectCache destroys cached ControlObjectClient handles before the connection is torn down.
+func (client *IedClient) clearControlObjectCache() {
+	client.controlMu.Lock()
+	defer client.controlMu.Unlock()
+	for _, ctrl := range client.controlCache {
+		if ctrl != nil {
+			C.ControlObjectClient_destroy(ctrl)
+		}
+	}
+	client.controlCache = nil
+}
+
+// controlObjectForRef returns a cached ControlObjectClient for controlReference or creates one.
+// If requireMmsInteger is true, ctlVal type must be MMS_INTEGER before caching; otherwise the new object is destroyed and an error is returned.
+func (client *IedClient) controlObjectForRef(controlReference string, requireMmsInteger bool) (C.ControlObjectClient, error) {
+	client.controlMu.Lock()
+	defer client.controlMu.Unlock()
+	if client.controlCache == nil {
+		client.controlCache = make(map[string]C.ControlObjectClient)
+	}
+	if ctrl, ok := client.controlCache[controlReference]; ok && ctrl != nil {
+		return ctrl, nil
+	}
+	cRef := C.CString(controlReference)
+	defer C.free(unsafe.Pointer(cRef))
+	ctrl := C.ControlObjectClient_create(cRef, client.connection)
+	if ctrl == nil {
+		var zero C.ControlObjectClient
+		return zero, fmt.Errorf("error creating control object client for %q", controlReference)
+	}
+	if requireMmsInteger {
+		got := MMSType(C.ControlObjectClient_getCtlValType(ctrl))
+		if got != MMS_INTEGER {
+			C.ControlObjectClient_destroy(ctrl)
+			var zero C.ControlObjectClient
+			return zero, fmt.Errorf("control %q: ctlVal MMS type is %d (%s), want MMS_INTEGER for INC",
+				controlReference, got, mmsTypeName(got))
+		}
+	}
+	client.controlCache[controlReference] = ctrl
+	return ctrl, nil
+}
+
 // DirectWithNormalSecurity issues a direct-with-normal-security Operate for an SPC-style
 // control object (boolean ctlVal). controlReference is the DO path without FC suffix
 // (e.g. "LD/LN.start", not "...start.stVal").
 func (client *IedClient) DirectWithNormalSecurity(controlReference string, val bool) error {
-	cDataSetReference := C.CString(controlReference)
-	defer C.free(unsafe.Pointer(cDataSetReference))
-
-	control := C.ControlObjectClient_create(cDataSetReference, client.connection)
-	if control == nil {
-		return fmt.Errorf("error creating control object client for %q", controlReference)
+	control, err := client.controlObjectForRef(controlReference, false)
+	if err != nil {
+		return err
 	}
-
-	defer C.ControlObjectClient_destroy(control)
 
 	ctlVal := C.MmsValue_newBoolean(C._Bool(val))
 	defer C.MmsValue_delete(ctlVal)
@@ -37,19 +75,9 @@ func (client *IedClient) DirectWithNormalSecurity(controlReference string, val b
 // control object (integer ctlVal, MMS_INTEGER). controlReference is the DO path without FC suffix.
 // If the server's ctlVal is not MMS_INTEGER (e.g. still boolean SPC), this returns an error without sending Operate.
 func (client *IedClient) DirectWithNormalSecurityInt32(controlReference string, val int32) error {
-	cRef := C.CString(controlReference)
-	defer C.free(unsafe.Pointer(cRef))
-
-	control := C.ControlObjectClient_create(cRef, client.connection)
-	if control == nil {
-		return fmt.Errorf("error creating control object client for %q", controlReference)
-	}
-	defer C.ControlObjectClient_destroy(control)
-
-	got := MMSType(C.ControlObjectClient_getCtlValType(control))
-	if got != MMS_INTEGER {
-		return fmt.Errorf("control %q: ctlVal MMS type is %d (%s), want MMS_INTEGER for INC",
-			controlReference, got, mmsTypeName(got))
+	control, err := client.controlObjectForRef(controlReference, true)
+	if err != nil {
+		return err
 	}
 
 	ctlVal := C.MmsValue_newIntegerFromInt32(C.int32_t(val))
@@ -71,14 +99,10 @@ func (client *IedClient) DirectWithNormalSecurityInt32(controlReference string, 
 // Uses MmsValue_newFloat (same as cmd/apcctlclient). libIEC61850 maps this to the server Oper type;
 // ControlObjectClient_getCtlValType may report MMS_STRUCTURE even though a plain float is accepted.
 func (client *IedClient) DirectWithNormalSecurityFloat32(controlReference string, val float32) error {
-	cRef := C.CString(controlReference)
-	defer C.free(unsafe.Pointer(cRef))
-
-	control := C.ControlObjectClient_create(cRef, client.connection)
-	if control == nil {
-		return fmt.Errorf("error creating control object client for %q", controlReference)
+	control, err := client.controlObjectForRef(controlReference, false)
+	if err != nil {
+		return err
 	}
-	defer C.ControlObjectClient_destroy(control)
 
 	ctlVal := C.MmsValue_newFloat(C.float(val))
 	if ctlVal == nil {
