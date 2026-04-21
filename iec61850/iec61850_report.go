@@ -23,6 +23,7 @@ extern FlatMmsValue* flattenReportDataSet(ClientReport report, int* out_count);
 import "C"
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -62,6 +63,38 @@ const (
 	REASON_GI           ReasonForInclusion = 16
 	REASON_UNKNOWN      ReasonForInclusion = 32
 )
+
+// String returns a human-readable bitmask form of the reason,
+// e.g. "DATA_CHANGE|INTEGRITY". Zero returns "0"; unknown bits fall back to "raw=N".
+func (r ReasonForInclusion) String() string {
+	ri := int(r)
+	if ri == 0 {
+		return "0"
+	}
+	var parts []string
+	if ri&int(REASON_DATA_CHANGE) != 0 {
+		parts = append(parts, "DATA_CHANGE")
+	}
+	if ri&int(REASON_QUAL_CHANGE) != 0 {
+		parts = append(parts, "QUAL_CHANGE")
+	}
+	if ri&int(REASON_DATA_UPDATE) != 0 {
+		parts = append(parts, "DATA_UPDATE")
+	}
+	if ri&int(REASON_INTEGRITY) != 0 {
+		parts = append(parts, "INTEGRITY")
+	}
+	if ri&int(REASON_GI) != 0 {
+		parts = append(parts, "GI")
+	}
+	if ri&int(REASON_UNKNOWN) != 0 {
+		parts = append(parts, "UNKNOWN")
+	}
+	if len(parts) == 0 {
+		return fmt.Sprintf("raw=%d", ri)
+	}
+	return strings.Join(parts, "|")
+}
 
 // ReportEntry holds one element from a received report.
 type ReportEntry struct {
@@ -270,6 +303,41 @@ func (client *IedClient) SubscribeReport(rcbRef string, cfg *ReportConfig, handl
 	}
 
 	return nil
+}
+
+// SubscribeReportWithCandidates tries a list of RCB reference candidates in order,
+// returning the first one that subscribes successfully.
+//
+// For each candidate, if the initial SubscribeReport fails, the method also tries
+// the same ref with a trailing "01" suffix (common indexed-instance convention).
+//
+// Typical callers use this when the server's exact RCB reference is not known
+// ahead of time (e.g. BR vs RP naming, vendor-specific LD/LN prefixes discovered
+// from CID). All candidate refs share the same cfg and handler.
+//
+// Returns the chosenRef that succeeded; on full failure, returns an error that
+// concatenates per-candidate error messages (up to the first 20 for readability).
+func (client *IedClient) SubscribeReportWithCandidates(candidates []string, cfg *ReportConfig, handler ReportHandler) (chosenRef string, err error) {
+	if len(candidates) == 0 {
+		return "", fmt.Errorf("SubscribeReportWithCandidates: no candidates")
+	}
+	const errMsgMax = 20
+	var errs []string
+	for _, base := range candidates {
+		if e := client.SubscribeReport(base, cfg, handler); e == nil {
+			return base, nil
+		} else if len(errs) < errMsgMax {
+			errs = append(errs, fmt.Sprintf("%s: %v", base, e))
+		}
+		alt := base + "01"
+		if e := client.SubscribeReport(alt, cfg, handler); e == nil {
+			return alt, nil
+		} else if len(errs) < errMsgMax {
+			errs = append(errs, fmt.Sprintf("%s: %v", alt, e))
+		}
+	}
+	return "", fmt.Errorf("SubscribeReportWithCandidates: all %d refs (with +01 alt) failed: %s",
+		len(candidates), strings.Join(errs, "; "))
 }
 
 // UnsubscribeReport disables reporting for an RCB and removes the local handler.
