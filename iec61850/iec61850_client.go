@@ -25,11 +25,6 @@ const (
 	IED_STATE_CLOSING
 )
 
-type GoMmsValue struct {
-	Type  MMSType     // MMS_VALUE ENUM
-	Value interface{} // The Go representation of the value
-}
-
 type Option func(client *IedClient)
 
 type IedClient struct {
